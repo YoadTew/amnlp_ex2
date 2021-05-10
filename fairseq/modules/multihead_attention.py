@@ -37,8 +37,14 @@ class MultiheadAttention(nn.Module):
         encoder_decoder_attention=False,
         q_noise=0.0,
         qn_block_size=8,
+        need_masking=False,
+        mask_head=-1
     ):
         super().__init__()
+
+        self.need_masking = need_masking
+        self.mask_head = mask_head
+
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
         self.vdim = vdim if vdim is not None else embed_dim
@@ -143,6 +149,7 @@ class MultiheadAttention(nn.Module):
                 weights for each head. Implies *need_weights*. Default:
                 return the average attention weights over all heads.
         """
+
         if need_head_weights:
             need_weights = True
 
@@ -170,7 +177,7 @@ class MultiheadAttention(nn.Module):
             and not torch.jit.is_scripting()
         ):
             assert key is not None and value is not None
-            return F.multi_head_attention_forward(
+            output = F.multi_head_attention_forward(
                 query,
                 key,
                 value,
@@ -193,6 +200,8 @@ class MultiheadAttention(nn.Module):
                 k_proj_weight=self.k_proj.weight,
                 v_proj_weight=self.v_proj.weight,
             )
+
+            return output
 
         if incremental_state is not None:
             saved_state = self._get_input_buffer(incremental_state)
@@ -375,6 +384,12 @@ class MultiheadAttention(nn.Module):
             attn = attn.contiguous().view(tgt_len, bsz, embed_dim)
         else:
             attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
+
+        if self.need_masking:
+            attn = attn.reshape(attn.size(0), attn.size(1), self.num_heads, -1)
+            attn[:, :, self.mask_head] = 0
+            attn = attn.reshape(attn.size(0), attn.size(1), -1)
+
         attn = self.out_proj(attn)
         attn_weights: Optional[Tensor] = None
         if need_weights:
