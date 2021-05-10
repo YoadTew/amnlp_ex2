@@ -1,0 +1,9 @@
+.data-bin/
+data-bin
+
+data-bin/iwslt14.tokenized.de-en/
+
+/examples/translation/iwslt14.tokenized.de-en/
+/examples/translation/orig/
+
+/baseline/
