@@ -32,6 +32,8 @@ from fairseq.modules.checkpoint_activations import checkpoint_wrapper
 from fairseq.modules.quant_noise import quant_noise as apply_quant_noise_
 from torch import Tensor
 
+from fairseq.modules.transformer_layer import TransformerAttentionLayer, TransformerFcLayer
+
 
 DEFAULT_MAX_SOURCE_POSITIONS = 1024
 DEFAULT_MAX_TARGET_POSITIONS = 1024
@@ -403,9 +405,17 @@ class TransformerEncoder(FairseqEncoder):
             self.layers = LayerDropModuleList(p=self.encoder_layerdrop)
         else:
             self.layers = nn.ModuleList([])
-        self.layers.extend(
-            [self.build_encoder_layer(args, i) for i in range(args.encoder_layers)]
-        )
+
+
+        for i, curr_layer in enumerate(args.enc_layer_configuration):
+            if curr_layer == "A":
+                self.layers.append(self.build_attention_layer(args, i))
+            elif curr_layer == "F":
+                self.layers.append(self.build_fc_layer(args, i))
+
+        # self.layers.extend(
+        #     [self.build_encoder_layer(args, i) for i in range(args.encoder_layers)]
+        # )
         self.num_layers = len(self.layers)
 
         if args.encoder_normalize_before:
@@ -415,6 +425,36 @@ class TransformerEncoder(FairseqEncoder):
 
     def build_encoder_layer(self, args, indx):
         layer = TransformerEncoderLayer(args, indx)
+        checkpoint = getattr(args, "checkpoint_activations", False)
+        if checkpoint:
+            offload_to_cpu = getattr(args, "offload_activations", False)
+            layer = checkpoint_wrapper(layer, offload_to_cpu=offload_to_cpu)
+        # if we are checkpointing, enforce that FSDP always wraps the
+        # checkpointed layer, regardless of layer size
+        min_params_to_wrap = (
+            getattr(args, "min_params_to_wrap", DEFAULT_MIN_PARAMS_TO_WRAP)
+            if not checkpoint else 0
+        )
+        layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
+        return layer
+
+    def build_attention_layer(self, args, indx):
+        layer = TransformerAttentionLayer(args, indx)
+        checkpoint = getattr(args, "checkpoint_activations", False)
+        if checkpoint:
+            offload_to_cpu = getattr(args, "offload_activations", False)
+            layer = checkpoint_wrapper(layer, offload_to_cpu=offload_to_cpu)
+        # if we are checkpointing, enforce that FSDP always wraps the
+        # checkpointed layer, regardless of layer size
+        min_params_to_wrap = (
+            getattr(args, "min_params_to_wrap", DEFAULT_MIN_PARAMS_TO_WRAP)
+            if not checkpoint else 0
+        )
+        layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
+        return layer
+
+    def build_fc_layer(self, args, indx):
+        layer = TransformerFcLayer(args, indx)
         checkpoint = getattr(args, "checkpoint_activations", False)
         if checkpoint:
             offload_to_cpu = getattr(args, "offload_activations", False)
